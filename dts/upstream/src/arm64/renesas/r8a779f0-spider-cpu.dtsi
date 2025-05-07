@@ -212,7 +212,7 @@
 };
 
 &rwdt {
-	timeout-sec = <60>;
+	timeout-sec = <10>;
 	status = "okay";
 };
 

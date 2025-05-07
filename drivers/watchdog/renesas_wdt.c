@@ -24,7 +24,7 @@ struct renesas_wdt {
 #define RWTCSRA_TME		BIT(7)
 
 #define CSR_MASK	0xA5A5A500
-#define CNT_MASK	0xA5A50000
+#define CNT_MASK	0x5A5A0000
 
 #define RWDT_DEFAULT_TIMEOUT 60U
 
@@ -66,28 +66,21 @@ static int renesas_wdt_start(struct udevice *dev, u64 timeout, ulong flags)
 	dev_err(dev, "timeout = %llu\n", timeout);
 	max_timeout = DIV_BY_CLKS_PER_SEC(priv, 65536);
 	dev_err(dev, "max_timeout = %llu\n", max_timeout);
-	min(max_timeout, timeout);
+	timeout = min(max_timeout, timeout / 1000);
 	dev_err(dev, "timeout = %llu\n", timeout);
 
 	/* Stop the timer before we modify any register */
-	dev_err(dev, "csra = %p\n", &priv->wdt->csra);
-	dev_err(dev, "csrb = %p\n", &priv->wdt->csrb);
-	dev_err(dev, "cnt = %p\n", &priv->wdt->cnt);
 	val = readb_relaxed(&priv->wdt->csra) & ~RWTCSRA_TME;
 	dev_err(dev, "csra <- %x\n", val);
 	writel_relaxed(val | CSR_MASK, &priv->wdt->csra);
 	/* Delay 2 cycles before setting watchdog counter */
 	rwdt_wait_cycles(priv, 2);
 
-	dev_err(dev, "cnt <- %x\n", (u16)(65536 - MUL_BY_CLKS_PER_SEC(priv, timeout)));
-	writel_relaxed((65536 - MUL_BY_CLKS_PER_SEC(priv, timeout)) | CNT_MASK, &priv->wdt->cnt);
-	dev_err(dev, "csra <- %x\n", priv->cks);
-	writel_relaxed(priv->cks | CSR_MASK, &priv->wdt->csra);
-	// dev_err(dev, "csrb <- %x\n", 0);
-	// writel_relaxed(0 | CSR_MASK, &priv->wdt->csrb);
-
 	while (readb_relaxed(&priv->wdt->csra) & RWTCSRA_WRFLG)
 		cpu_relax();
+
+	dev_err(dev, "cnt <- %x\n", (u16)(65536 - MUL_BY_CLKS_PER_SEC(priv, timeout)));
+	writel_relaxed((65536 - MUL_BY_CLKS_PER_SEC(priv, timeout)) | CNT_MASK, &priv->wdt->cnt);
 
 	dev_err(dev, "csra <- %x\n", (u8)(priv->cks | RWTCSRA_TME));
 	writel_relaxed(priv->cks | RWTCSRA_TME | CSR_MASK, &priv->wdt->csra);
@@ -113,7 +106,7 @@ static int renesas_wdt_reset(struct udevice *dev)
 	val = readb_relaxed(&priv->wdt->csra) & ~RWTCSRA_TME;
 	writel_relaxed(val | CSR_MASK, &priv->wdt->csra);
 	/* Delay 2 cycles before setting watchdog counter */
-	udelay(DIV_ROUND_UP(2 * 1000000, priv->clk_rate));
+	rwdt_wait_cycles(priv, 2);
 
 	writel_relaxed(0xffff | CNT_MASK, &priv->wdt->cnt);
 	/* smallest divider to reboot soon */
@@ -125,7 +118,7 @@ static int renesas_wdt_reset(struct udevice *dev)
 	writel_relaxed(RWTCSRA_TME | CSR_MASK, &priv->wdt->csra);
 
 	/* wait 2 cycles, so watchdog will trigger */
-	udelay(DIV_ROUND_UP(2 * 1000000, priv->clk_rate));
+	rwdt_wait_cycles(priv, 2);
 
 	return 0;
 }
@@ -158,6 +151,7 @@ static int renesas_wdt_probe(struct udevice *dev)
 		clks_per_sec = priv->clk_rate / clk_divs[i];
 		if (clks_per_sec && clks_per_sec < 65536) {
 			priv->cks = i;
+			dev_err(dev, "Divider = %u\n", clk_divs[i]);
 			break;
 		}
 	}
